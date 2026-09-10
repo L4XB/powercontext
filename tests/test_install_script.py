@@ -40,7 +40,7 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
     command_dir.mkdir()
     home_dir = tmp_path / "home"
     home_dir.mkdir()
-    for name in ("sh", "dirname", "uname", "mktemp", "rm", "grep", "mkdir", "cp"):
+    for name in ("sh", "dirname", "uname", "mktemp", "rm", "grep", "mkdir", "cp", "cat"):
         executable = shutil.which(name)
         assert executable is not None
         (command_dir / name).symlink_to(executable)
@@ -70,12 +70,19 @@ elif args[:2] == ["tool", "install"]:
         "index": os.environ.get("UV_DEFAULT_INDEX"),
         "python": args[args.index("--python") + 1],
         "python_downloads_disabled": "--no-python-downloads" in args,
+        "python_mirror": os.environ.get("UV_PYTHON_INSTALL_MIRROR"),
+        "astral_mirror": os.environ.get("UV_ASTRAL_MIRROR_URL"),
     }))
     target = root / ".local/bin/powercontext"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("#!/bin/sh\\n" +
         'if [ "$1" = "setup" ]; then\\n' +
         '  printf "%s\\\\n" "$@" > "$HOME/setup-args"\\n' +
+        '  if [ "${SETUP_READ_SELECTION:-}" = 1 ]; then\\n' +
+        '    [ -t 0 ] || exit 2\\n' +
+        '    IFS= read -r selection\\n' +
+        '    printf "%s\\\\n" "$selection" > "$HOME/setup-selection"\\n' +
+        '  fi\\n' +
         '  exit "${SETUP_STATUS:-0}"\\nfi\\n')
     target.chmod(0o755)
 else:
@@ -85,21 +92,34 @@ else:
     write_executable(
         command_dir / "curl",
         f"#!{sys.executable}\n"
-        + """import os
+        + """import json
+import os
 import sys
 from pathlib import Path
 
 args = sys.argv[1:]
 url = next(arg for arg in args if arg.startswith("https://"))
-target = Path(args[args.index("-o") + 1])
+output_flag = "-o" if "-o" in args else "-O"
+target = Path(args[args.index(output_flag) + 1])
 with (Path(os.environ["HOME"]) / "downloads").open("a") as stream:
     stream.write(url + "\\n")
-if url == "https://astral.sh/uv/install.sh":
-    target.write_text('#!/bin/sh\\nmkdir -p "$UV_INSTALL_DIR"\\ncp "$UV_FIXTURE" "$UV_INSTALL_DIR/uv"\\n')
-elif os.environ.get("INDEX_UNREACHABLE"):
+if url == "https://www.cloudflare.com/cdn-cgi/trace":
+    if os.environ.get("COUNTRY_FAILURE"):
+        raise SystemExit(28)
+    target.write_text(os.environ.get("COUNTRY_RESPONSE", "loc=US\\n"))
+elif url == os.environ.get("POWERCONTEXT_UV_INSTALLER_URL", "https://astral.sh/uv/install.sh"):
+    if os.environ.get("UV_INSTALLER_UNREACHABLE"):
+        raise SystemExit(28)
+    target.write_text(
+        '#!/bin/sh\\n'
+        'printf "%s\\\\n" "${UV_INSTALLER_GITHUB_BASE_URL:-}" > "$HOME/uv-binary-mirror"\\n'
+        'mkdir -p "$UV_INSTALL_DIR"\\ncp "$UV_FIXTURE" "$UV_INSTALL_DIR/uv"\\n'
+    )
+elif os.environ.get("INDEX_UNREACHABLE") or url in json.loads(os.environ.get("UNREACHABLE_INDEXES", "[]")):
     raise SystemExit(28)
 else:
-    version = os.environ.get("AVAILABLE_VERSION", "0.2.0")
+    versions = json.loads(os.environ.get("INDEX_VERSIONS", "{}"))
+    version = versions.get(url, os.environ.get("AVAILABLE_VERSION", "0.2.0"))
     target.write_text(f'<a href="powercontext-{version}-py3-none-any.whl">wheel</a>')
 """,
     )
@@ -163,6 +183,84 @@ def test_reuses_local_python_without_downloading_an_interpreter(
     assert ("https://astral.sh/uv/install.sh" in downloads) is not existing_uv
 
 
+def test_download_sources_are_independent_of_the_package_index(installer_env: dict[str, str]) -> None:
+    home_dir = Path(installer_env["HOME"])
+    installer_env.update({
+        "POWERCONTEXT_UV_INSTALLER_URL": "https://downloads.example/uv/install.sh",
+        "UV_INSTALLER_GITHUB_BASE_URL": "https://downloads.example/github",
+        "UV_PYTHON_INSTALL_MIRROR": "https://downloads.example/python",
+        "UV_ASTRAL_MIRROR_URL": "https://downloads.example/astral",
+    })
+    result = run_installer(installer_env, "--no-hosts", "--index-url", "https://packages.example/simple")
+    assert result.returncode == 0, result.stderr
+    installed = json.loads((home_dir / "installed.json").read_text())
+    assert installed["index"] == "https://packages.example/simple"
+    assert installed["python_mirror"] == installer_env["UV_PYTHON_INSTALL_MIRROR"]
+    assert installed["astral_mirror"] == installer_env["UV_ASTRAL_MIRROR_URL"]
+    assert (home_dir / "uv-binary-mirror").read_text().strip() == installer_env["UV_INSTALLER_GITHUB_BASE_URL"]
+    downloads = (home_dir / "downloads").read_text()
+    assert installer_env["POWERCONTEXT_UV_INSTALLER_URL"] in downloads
+    assert "astral.sh/uv/install.sh" not in downloads
+
+
+def test_existing_uv_does_not_need_a_reachable_installer(installer_env: dict[str, str]) -> None:
+    (Path(installer_env["PATH"]) / "uv").symlink_to(installer_env["UV_FIXTURE"])
+    installer_env["POWERCONTEXT_UV_INSTALLER_URL"] = "https://downloads.example/uv/install.sh"
+    installer_env["UV_INSTALLER_UNREACHABLE"] = "1"
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode == 0, result.stderr
+    assert "downloads.example" not in (Path(installer_env["HOME"]) / "downloads").read_text()
+
+
+def test_uv_installer_download_failure_explains_which_source_to_configure(installer_env: dict[str, str]) -> None:
+    installer_env["UV_INSTALLER_UNREACHABLE"] = "1"
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode != 0
+    assert "POWERCONTEXT_UV_INSTALLER_URL" in result.stderr
+    assert not (Path(installer_env["HOME"]) / "installed.json").exists()
+
+
+def test_piped_installer_reads_host_selection_from_the_terminal(installer_env: dict[str, str]) -> None:
+    pytest.importorskip("pty")
+    assert BASH is not None
+    write_executable(Path(installer_env["PATH"]) / "git", "#!/bin/sh\nexit 0\n")
+    installer_env["SETUP_READ_SELECTION"] = "1"
+    # Give the pipeline a controlling terminal while keeping the script on stdin.
+    controller = """import errno, os, pty, sys
+pid, terminal = pty.fork()
+if pid == 0:
+    os.execv(sys.argv[1], [sys.argv[1], '-o', 'pipefail', '-c',
+        'cat "$1" | "$2"', 'installer-pipeline', sys.argv[2], sys.argv[1]])
+try:
+    os.write(terminal, b'codex\\n')
+    while True:
+        try:
+            data = os.read(terminal, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not data:
+            break
+        os.write(1, data)
+finally:
+    os.close(terminal)
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", controller, BASH, str(SCRIPT)],
+        env=installer_env,
+        cwd=installer_env["HOME"],
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (Path(installer_env["HOME"]) / "setup-selection").read_text().strip() == "codex"
+
+
 @pytest.mark.parametrize("version", ["0.2.0", "0.3.0rc1"])
 def test_runtime_and_selected_hosts_use_the_same_release(installer_env: dict[str, str], version: str) -> None:
     home_dir = Path(installer_env["HOME"])
@@ -185,6 +283,7 @@ def test_preserves_existing_index_and_does_not_probe_public_pypi(installer_env: 
     installed = json.loads((home_dir / "installed.json").read_text())
     assert installed["index"] == installer_env["UV_DEFAULT_INDEX"]
     assert "pypi.org" not in (home_dir / "downloads").read_text()
+    assert "cloudflare.com" not in (home_dir / "downloads").read_text()
     assert "private-token" not in result.stdout + result.stderr
 
 
@@ -197,6 +296,7 @@ def test_preserves_user_uv_configuration(installer_env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stderr
     assert config.read_text() == content
     assert "pypi.org" not in (Path(installer_env["HOME"]) / "downloads").read_text()
+    assert "cloudflare.com" not in (Path(installer_env["HOME"]) / "downloads").read_text()
 
 
 def test_explicit_mirror_applies_without_changing_global_configuration(installer_env: dict[str, str]) -> None:
@@ -206,7 +306,79 @@ def test_explicit_mirror_applies_without_changing_global_configuration(installer
     assert result.returncode == 0, result.stderr
     assert json.loads((home_dir / "installed.json").read_text())["index"] == mirror
     assert f"{mirror}/powercontext/" in (home_dir / "downloads").read_text()
+    assert "cloudflare.com" not in (home_dir / "downloads").read_text()
     assert not (home_dir / ".config/uv/uv.toml").exists()
+
+
+@pytest.mark.parametrize("downloader", ["curl", "wget"])
+@pytest.mark.parametrize(
+    ("response", "expected_index"),
+    [
+        ("fl=example\r\nloc=CN\r\nts=0\r\n", "https://pypi.tuna.tsinghua.edu.cn/simple"),
+        ("loc=US\n", "https://pypi.org/simple"),
+        ("<html>Service unavailable</html>\n", "https://pypi.org/simple"),
+    ],
+)
+def test_selects_package_index_by_network_country(
+    installer_env: dict[str, str], downloader: str, response: str, expected_index: str
+) -> None:
+    home_dir = Path(installer_env["HOME"])
+    installer_env["COUNTRY_RESPONSE"] = response
+    if downloader == "wget":
+        command_dir = Path(installer_env["PATH"])
+        (command_dir / "curl").rename(command_dir / "wget")
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode == 0, result.stderr
+    installed = json.loads((home_dir / "installed.json").read_text())
+    assert installed["index"] == expected_index
+    assert f"Package index: {expected_index}" in result.stdout
+    assert not (home_dir / ".config/uv/uv.toml").exists()
+
+
+def test_country_lookup_failure_does_not_prevent_installation(installer_env: dict[str, str]) -> None:
+    installer_env["COUNTRY_FAILURE"] = "1"
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode == 0, result.stderr
+    installed = json.loads((Path(installer_env["HOME"]) / "installed.json").read_text())
+    assert installed["index"] == "https://pypi.org/simple"
+    assert "Network country unavailable" in result.stdout
+
+
+@pytest.mark.parametrize("country", ["CN", "US"])
+@pytest.mark.parametrize("failure", ["unreachable", "missing-version"])
+def test_automatically_falls_back_to_an_index_with_the_requested_version(
+    installer_env: dict[str, str], country: str, failure: str
+) -> None:
+    pypi = "https://pypi.org/simple"
+    mirror = "https://pypi.tuna.tsinghua.edu.cn/simple"
+    preferred, fallback = (mirror, pypi) if country == "CN" else (pypi, mirror)
+    installer_env["COUNTRY_RESPONSE"] = f"loc={country}\n"
+    if failure == "unreachable":
+        installer_env["UNREACHABLE_INDEXES"] = json.dumps([f"{preferred}/powercontext/"])
+    else:
+        installer_env["INDEX_VERSIONS"] = json.dumps({f"{preferred}/powercontext/": "0.1.0"})
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode == 0, result.stderr
+    installed = json.loads((Path(installer_env["HOME"]) / "installed.json").read_text())
+    assert installed["index"] == fallback
+    assert installed["requirement"] == "powercontext[cli,server]==0.2.0"
+
+
+@pytest.mark.parametrize("failure", ["unreachable", "missing-version"])
+def test_explicit_index_failure_does_not_switch_to_a_public_index(installer_env: dict[str, str], failure: str) -> None:
+    index = "https://packages.example/simple"
+    if failure == "unreachable":
+        installer_env["UNREACHABLE_INDEXES"] = json.dumps([f"{index}/powercontext/"])
+    else:
+        installer_env["INDEX_VERSIONS"] = json.dumps({f"{index}/powercontext/": "0.1.0"})
+    result = run_installer(installer_env, "--no-hosts", "--index-url", index)
+    assert result.returncode != 0
+    home_dir = Path(installer_env["HOME"])
+    assert not (home_dir / "installed.json").exists()
+    downloads = (home_dir / "downloads").read_text()
+    assert "pypi.org" not in downloads
+    assert "tuna.tsinghua.edu.cn" not in downloads
+    assert "cloudflare.com" not in downloads
 
 
 @pytest.mark.parametrize("failure", ["missing-version", "unreachable"])
@@ -246,3 +418,11 @@ def test_index_argument_does_not_echo_credentials(installer_env: dict[str, str])
     result = run_installer(installer_env, "--no-hosts", "--index-url", "https://user:private-token@host/simple")
     assert result.returncode != 0
     assert "private-token" not in result.stdout + result.stderr
+
+
+def test_uv_installer_url_does_not_echo_credentials(installer_env: dict[str, str]) -> None:
+    installer_env["POWERCONTEXT_UV_INSTALLER_URL"] = "https://user:private-token@host/install.sh"
+    result = run_installer(installer_env, "--no-hosts")
+    assert result.returncode != 0
+    assert "private-token" not in result.stdout + result.stderr
+    assert not (Path(installer_env["HOME"]) / "downloads").exists()
