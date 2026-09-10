@@ -30,16 +30,6 @@ Install the latest released [PowerContext](https://pypi.org/project/powercontext
 uv tool install "powercontext[cli,server]==0.2.0"
 ```
 
-To enable automatic Memory extraction, add these settings to `.env` in the directory where you start the Server and replace the API key (OpenAI example):
-
-```dotenv
-OPENAI_API_KEY=replace-with-your-api-key
-POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=openai-chat:gpt-4.1-mini
-POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS=60
-```
-
-For other providers and Embedding settings, see [Configure models](https://powercontext.oceanbase.io/en/docs/get-started/configure-models/).
-
 Start a local Server in its own terminal:
 
 ```bash

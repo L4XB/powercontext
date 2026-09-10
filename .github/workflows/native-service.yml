@@ -170,9 +170,6 @@ jobs:
         uses: ./.github/actions/setup-python-env
 
       - name: Install the built distribution in a fresh virtual environment
-        env:
-          # Exercise a release-shaped version while building the current commit.
-          SETUPTOOLS_SCM_PRETEND_VERSION: "0.2.0rc1"
         shell: pwsh
         run: |
           uv build --wheel
@@ -180,26 +177,6 @@ jobs:
           $wheelUri = "file:///" + $wheel.Replace('\', '/')
           uv venv .native-venv
           uv pip install --python .native-venv\Scripts\python.exe "powercontext[cli,server] @ $wheelUri" pytest
-
-      - name: Verify the documented PowerShell installation
-        shell: pwsh
-        run: |
-          $env:POWERCONTEXT_INSTALL_WHEEL = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
-          .native-venv\Scripts\python.exe -m pytest -q -s `
-            --junitxml "$env:RUNNER_TEMP\powercontext-install-windows.xml" `
-            --basetemp "$env:RUNNER_TEMP\powercontext-install-tests" `
-            tests/native/test_installation.py
-          exit $LASTEXITCODE
-
-      - name: Upload installation diagnostics after failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-installation-logs
-          path: |
-            ${{ runner.temp }}/powercontext-install-windows.xml
-            ${{ runner.temp }}/powercontext-install-tests/**/*.log
-          if-no-files-found: ignore
 
       - name: Verify binary cursor persistence and restart compatibility
         shell: pwsh

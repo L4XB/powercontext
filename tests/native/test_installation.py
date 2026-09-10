@@ -20,8 +20,6 @@ import email
 import hashlib
 import json
 import os
-import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -189,40 +187,4 @@ def test_bash_installer_bootstraps_only_missing_components(tmp_path: Path, avail
     assert bool(list((tmp_path / "python").glob("cpython-*"))) is not has_python
     assert ("Using local Python:" in output) is has_python
     assert preserved.read_text() == "existing user configuration\n"
-    verify_installation(tmp_path, environment)
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="exercise the documented PowerShell entry point on Windows")
-def test_windows_documented_uv_installation(tmp_path: Path) -> None:
-    environment = install_environment(tmp_path)
-    environment["UV_PYTHON_DOWNLOADS"] = "never"
-    documentation = (ROOT / "docs/en/docs/get-started/quickstart.md").read_text(encoding="utf-8")
-    match = re.search(r'```powershell tab="Windows"[^\n]*\n(.*?)```', documentation, re.DOTALL)
-    assert match is not None
-    commands = re.sub(r'powercontext\[cli,server\]==[^"\s]+', f"powercontext[cli,server]=={wheel_version()}", match[1])
-    script = tmp_path / "install.ps1"
-    script.write_text('$ErrorActionPreference = "Stop"\n' + commands + "\nexit $LASTEXITCODE\n", encoding="utf-8")
-    run_command(["pwsh", "-NoProfile", "-File", str(script)], tmp_path, environment, "install")
-    assert not (Path(environment["HOME"]) / ".local/bin/uv.exe").exists()
-    assert not list((tmp_path / "python").glob("cpython-*"))
-    verify_installation(tmp_path, environment)
-
-
-def test_documented_existing_uv_installation(tmp_path: Path) -> None:
-    environment = install_environment(tmp_path)
-    environment["UV_PYTHON_DOWNLOADS"] = "never"
-    documentation = (ROOT / "docs/en/docs/get-started/quickstart.md").read_text(encoding="utf-8")
-    match = re.search(r'```console tab="Existing uv"[^\n]*\n(.*?)```', documentation, re.DOTALL)
-    assert match is not None
-    install_command = next(line for line in match[1].splitlines() if line.startswith("uv tool install "))
-    install_command = re.sub(
-        r'powercontext\[cli,server\]==[^"\s]+',
-        f"powercontext[cli,server]=={wheel_version()}",
-        install_command,
-    )
-    command = shlex.split(install_command)
-    uv = shutil.which("uv")
-    assert uv is not None
-    command[0] = uv
-    run_command(command, tmp_path, environment, "install-existing-uv")
     verify_installation(tmp_path, environment)

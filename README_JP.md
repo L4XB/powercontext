@@ -30,16 +30,6 @@ PowerContext は、会話をまたいでもコンテキストを作業ととも�
 uv tool install "powercontext[cli,server]==0.2.0"
 ```
 
-Memory の自動抽出を有効にするには、Server を起動するディレクトリの `.env` ファイルに次の設定を追加し、API キーを置き換えます（OpenAI の例）：
-
-```dotenv
-OPENAI_API_KEY=replace-with-your-api-key
-POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=openai-chat:gpt-4.1-mini
-POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS=60
-```
-
-他のサービスや Embedding の設定は[モデル設定ガイド](https://powercontext.oceanbase.io/en/docs/get-started/configure-models/)を参照してください。
-
 別のターミナルでローカル Server を起動します：
 
 ```bash

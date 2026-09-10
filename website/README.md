@@ -29,15 +29,6 @@ pnpm build
 
 静态产物输出到 `website/out`。
 
-## 安装入口与文档 Tab
-
-`public/install.sh` 随网站输出为 `/install.sh`，默认版本与 README、入门文档中的包版本和集成 tag 一起维护。
-更新默认版本前，确认对应 PyPI 包和 `powercontext-v<version>` tag 已发布。发布网站前验证脚本的无 Python/uv 安装路径。
-
-入门文档使用 Fumadocs 的 Markdown 代码块 Tab，保留 `.md` 源文件和仓库链接。
-相邻代码块的 `tab="..."` 指定标签；平台选择使用相同的 `tab-group="install-platform"` 同步。
-版本示例把包安装与集成 setup 放在同一个 Tab 中，避免混用版本。README 使用普通 Markdown。
-
 ## 生成内容
 
 - OpenAPI 页面由 `openapi/powercontext.yaml` 直接生成。

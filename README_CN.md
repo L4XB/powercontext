@@ -30,16 +30,6 @@ PowerContext 让上下文跟随工作，跨越不同的对话。你回来时，�
 uv tool install "powercontext[cli,server]==0.2.0"
 ```
 
-如需自动抽取 Memory，在启动 Server 的目录下的 `.env` 文件中加入以下配置，并替换 API Key（以 OpenAI 为例）：
-
-```dotenv
-OPENAI_API_KEY=replace-with-your-api-key
-POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=openai-chat:gpt-4.1-mini
-POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS=60
-```
-
-其他服务与 Embedding 设置见[配置模型](https://powercontext.oceanbase.io/zh/docs/get-started/configure-models/)。
-
 在单独的终端中启动本地 Server：
 
 ```bash

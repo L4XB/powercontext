@@ -5,7 +5,7 @@ description: Generate, inspect, validate, and run PowerContext from an explicit 
 
 # Configure a Server environment
 
-Use this guide to generate, protect, and load an environment file. For your first generation or embedding service, start with [Configure models](configure-models.md).
+Use an explicit environment file when the Server needs inference, scheduling, storage, or deployment settings.
 
 ## 1. Generate the file
 
@@ -13,15 +13,16 @@ Use this guide to generate, protect, and load an environment file. For your firs
 powercontext config init --output .env
 ```
 
-The command generates basic settings that can start a local Server without asking for models or provider credentials.
-For automatic extraction, add a generation model, credentials, and a schedule interval. Vector search also needs an embedding model, profile ID, and dimension.
-If `.env` already exists, edit the required entries rather than initializing it again.
+The guided command writes a private file with mode `0600` and does not ask for models or provider credentials during
+deployment. The default file can start the Server directly; add the required model, credential, embedding profile ID,
+and dimension when you need automatic extraction, model generation, or vector retrieval.
 
 When `--force` would remove existing model, embedding, inference schedule, or provider credential settings, the
 command identifies that impact and requires an explicit confirmation that defaults to no. After confirmation, it
 creates a mode-`0600` backup before replacing the file.
 
-On macOS and Linux, the command writes a private file with mode `0600`. Provide credentials through a private environment file or secret manager. Keep them out of command-line arguments and Git.
+On macOS and Linux, the guided command writes a private file with mode `0600`. Enter provider credentials through your environment or
+secret manager, not in command-line arguments.
 
 Windows support is `experimental`. Before using the file for a personal service, restrict its ACL as described in
 [Deploy the Server](../operate/deploy-server.md).

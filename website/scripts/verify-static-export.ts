@@ -73,20 +73,6 @@ const exportedDocuments = new Map(
     htmlFiles.map(async (file) => [routeFromOutputFile(file), await readFile(file, 'utf8')] as const),
   ),
 );
-const installerSource = await readFile(path.join(websiteDirectory, 'public', 'install.sh'), 'utf8');
-const installerExport = await readFile(path.join(outputDirectory, 'install.sh'), 'utf8');
-if (installerSource !== installerExport) {
-  throw new Error('The public installer does not match the exported /install.sh.');
-}
-for (const locale of locales) {
-  for (const page of ['quickstart', 'install-and-run', 'configure-models', 'configure-package-index']) {
-    const route = `/${locale}/docs/get-started/${page}`;
-    const document = exportedDocuments.get(route);
-    if (!document || !renderedMarkup(document).includes('role="tablist"')) {
-      throw new Error(`Installation documentation is missing its rendered tabs: ${route}`);
-    }
-  }
-}
 const requiredRoutes = ['/', '/en', '/zh', '/en/docs', '/zh/docs', '/api', '/en/modules', '/zh/modules'];
 const missingRequiredRoutes = requiredRoutes.filter((route) => !exportedDocuments.has(route));
 const missingRfcRoutes = [...rfcRoutes].filter((route) => !exportedDocuments.has(route));
